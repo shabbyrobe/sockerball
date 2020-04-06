@@ -1,19 +1,15 @@
 package packetsrv
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
 	"sync"
 	"time"
 
-	service "github.com/shabbyrobe/go-service"
 	"github.com/shabbyrobe/sockerball"
 	"github.com/shabbyrobe/sockerball/internal/incrementer"
 )
-
-var runner = service.NewRunner()
 
 func Listen(network, addr string) (sockerball.Listener, error) {
 	pl := &listener{
@@ -22,9 +18,9 @@ func Listen(network, addr string) (sockerball.Listener, error) {
 		accept:  make(chan *communicator, 1024), // FIXME: buffer size
 		stop:    make(chan struct{}),
 	}
-	if err := runner.Start(context.Background(), service.New("", pl)); err != nil {
-		return nil, err
-	}
+	go func() {
+		pl.listen()
+	}()
 	return pl, nil
 }
 
@@ -32,20 +28,19 @@ type listener struct {
 	network string
 	addr    string
 	inc     incrementer.Inc
-
-	accept chan *communicator
+	accept  chan *communicator
 
 	stop chan struct{}
 }
 
-func (pl *listener) Run(ctx service.Context) error {
+func (pl *listener) listen() error {
 	pc, err := net.ListenPacket(pl.network, pl.addr)
 	if err != nil {
 		return err
 	}
 
 	var (
-		failer = service.NewFailureListener(1)
+		errc   = make(chan error, 3)
 		reader = make(chan readMsg, 1024)
 		writer = make(chan writeMsg, 1024)
 		closer = make(chan net.Addr, 1024)
@@ -66,9 +61,10 @@ func (pl *listener) Run(ctx service.Context) error {
 
 		into := make([]byte, 65536)
 		for {
+			// FIXME: SetReadDeadline()
 			n, addr, err := pc.ReadFrom(into)
 			if err != nil {
-				failer.Send(err)
+				errc <- err
 				return
 			}
 
@@ -77,7 +73,7 @@ func (pl *listener) Run(ctx service.Context) error {
 
 			select {
 			case reader <- readMsg{n, addr, buf}:
-			case <-ctx.Done():
+			case <-pl.stop:
 				return
 			}
 		}
@@ -93,7 +89,7 @@ func (pl *listener) Run(ctx service.Context) error {
 				// errc MUST have a one-element buffer.
 				out.errc <- err
 
-			case <-ctx.Done():
+			case <-pl.stop:
 				return
 			}
 		}
@@ -108,10 +104,6 @@ func (pl *listener) Run(ctx service.Context) error {
 		}
 	}()
 
-	if err := ctx.Ready(); err != nil {
-		return err
-	}
-
 	// FIXME: configurable
 	cleanup := time.NewTicker(1 * time.Second)
 	defer cleanup.Stop()
@@ -124,6 +116,9 @@ func (pl *listener) Run(ctx service.Context) error {
 					commClose(addr, comm)
 				}
 			}
+
+		case err := <-errc:
+			return err
 
 		case addr := <-closer:
 			akey := addr.String()
@@ -145,7 +140,7 @@ func (pl *listener) Run(ctx service.Context) error {
 				case pl.accept <- comm:
 				default:
 					// FIXME: maybe a timeout?
-					return fmt.Errorf("accept buffer full")
+					return fmt.Errorf("packetsrv: accept buffer full")
 				}
 			}
 
@@ -158,9 +153,6 @@ func (pl *listener) Run(ctx service.Context) error {
 
 		case <-pl.stop:
 			return nil
-
-		case <-ctx.Done():
-			return nil
 		}
 	}
 
@@ -172,11 +164,16 @@ func (pl *listener) Accept() (sockerball.Communicator, error) {
 	case comm := <-pl.accept:
 		return comm, nil
 	case <-pl.stop:
-		return nil, errors.New("wslistener: listener closed")
+		return nil, errors.New("packetsrv: listener closed")
 	}
 }
 
-func (pl *listener) Close() error {
+func (pl *listener) Close() (rerr error) {
+	defer func() {
+		if err := recover(); err != nil {
+			rerr = fmt.Errorf("packetsrv: listener already closed")
+		}
+	}()
 	close(pl.stop)
 	return nil
 }

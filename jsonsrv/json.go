@@ -27,7 +27,7 @@ func NewCodec(opts ...Option) sockerball.Codec {
 		o(jp)
 	}
 	if jp.encoding == nil {
-		jp.encoding = binary.BigEndian
+		jp.encoding = binary.LittleEndian
 	}
 	return jp
 }

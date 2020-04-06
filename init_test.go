@@ -74,7 +74,6 @@ func (tc *testingCommunicator) WriteMessage(data []byte, timeout time.Duration) 
 type testingServer struct {
 	config          *ServerConfig
 	server          *Server
-	listener        Listener
 	handler         Handler
 	negotiator      Negotiator
 	protocol        Protocol
@@ -91,9 +90,6 @@ func newTestingServer(tt assert.T, opts ...serverOpt) *testingServer {
 	for _, o := range opts {
 		o(ts)
 	}
-	if ts.listener == nil {
-		ts.listener = newTestingListener()
-	}
 	if ts.negotiator == nil {
 		ts.negotiator = ts
 	}
@@ -101,8 +97,15 @@ func newTestingServer(tt assert.T, opts ...serverOpt) *testingServer {
 		ts.protocol = ts
 	}
 
-	ts.server = NewServer(ts.config, ts.listener, ts.negotiator, ts.handler, ts.serverOpts...)
+	ts.server = NewServer(ts.config, ts.negotiator, ts.handler, ts.serverOpts...)
 	return ts
+}
+
+func (ts *testingServer) Listen(tt assert.T, l Listener) {
+	if l == nil {
+		l = newTestingListener()
+	}
+	tt.MustOK(ts.server.Serve(l))
 }
 
 func (ts *testingServer) Negotiate(Side, Communicator, ConnConfig) (Protocol, error) {

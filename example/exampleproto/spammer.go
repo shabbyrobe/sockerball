@@ -1,4 +1,4 @@
-package main
+package exampleproto
 
 import (
 	"crypto/rand"
@@ -10,21 +10,21 @@ import (
 	"github.com/shabbyrobe/sockerball"
 )
 
-type spammer struct {
+type Spammer struct {
 	total    int
 	conns    int
 	waitRq   time.Duration
 	waitConn time.Duration
 }
 
-func (sp *spammer) Flags(fs *cmdy.FlagSet) {
+func (sp *Spammer) Flags(fs *cmdy.FlagSet) {
 	fs.IntVar(&sp.total, "n", 100000, "total messages to send")
 	fs.IntVar(&sp.conns, "c", 10, "connections")
 	fs.DurationVar(&sp.waitRq, "wr", 0, "wait between requests")
 	fs.DurationVar(&sp.waitConn, "wc", 0, "wait between connections")
 }
 
-func (sp *spammer) Dialer(neg sockerball.Negotiator) sockerball.Dialer {
+func (sp *Spammer) Dialer(neg sockerball.Negotiator) sockerball.Dialer {
 	config := sockerball.DefaultDialer(neg)
 	config.ResponseTimeout = 20 * time.Second
 	config.ReadTimeout = 20 * time.Second
@@ -35,7 +35,7 @@ func (sp *spammer) Dialer(neg sockerball.Negotiator) sockerball.Dialer {
 
 type spammerClientCb func(handler sockerball.Handler, opts ...sockerball.ClientOption) (sockerball.Client, error)
 
-func (sp *spammer) Spam(ctx cmdy.Context, handler sockerball.Handler, clientCb spammerClientCb) error {
+func (sp *Spammer) Spam(ctx cmdy.Context, handler sockerball.Handler, clientCb spammerClientCb) error {
 	in := make([]byte, 10000)
 	rand.Reader.Read(in)
 	_ = in
@@ -102,9 +102,11 @@ func (sp *spammer) Spam(ctx cmdy.Context, handler sockerball.Handler, clientCb s
 	wgConn.Wait()
 
 	since := time.Since(s)
-	fmt.Println(since,
-		since/time.Duration(sp.total),
-		int64(sp.total)*int64(time.Second)/int64(since))
+	fmt.Println(
+		"sent", sp.total,
+		"took", since,
+		"permsg", since/time.Duration(sp.total),
+		"tps", int64(sp.total)*int64(time.Second)/int64(since))
 
 	return nil
 }
